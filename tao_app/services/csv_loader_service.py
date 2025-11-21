@@ -1,13 +1,19 @@
+# services/csv_loader_service.py
 import pandas as pd
 from dateutil.parser import isoparse
 import logging
-from tao_app.models.transaction_record import TransactionRecord
+
 from tao_app.models.blacklist_record import BlacklistRecord
+from tao_app.models.transaction_record import TransactionRecord
 from tao_app.utils.normalizers import normalize_card_number
 
-logger=logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 class CsvLoaderService:
+
+    # --------------------------------------------------------
+    # Load Transactions CSV
+    # --------------------------------------------------------
     def load_transactions(self, path):
         df = pd.read_csv(path)
         out = []
@@ -42,14 +48,40 @@ class CsvLoaderService:
                     customer_kyc_status=str(r["customer_kyc_status"]),
                     customer_account_age_days=int(r["customer_account_age_days"])
                 )
-
                 out.append(txn)
 
             except Exception as e:
-                logger.warning("Bad row in CSV: %s", e)
+                logger.warning(f"Bad row in Transaction CSV: {e}")
 
         return out
 
+    # --------------------------------------------------------
+    # Load Blacklist CSV (INSIDE THE CLASS!)
+    # --------------------------------------------------------
     def load_blacklist(self, path):
-        df=pd.read_csv(path)
-        return [BlacklistRecord(**r.to_dict()) for _,r in df.iterrows()]
+        try:
+            df = pd.read_csv(path).fillna("")
+        except Exception as e:
+            logger.error(f"Failed to read Blacklist CSV: {e}")
+            raise
+
+        out = []
+        for _, row in df.iterrows():
+            try:
+                record = BlacklistRecord(
+                    user_id=row["user_id"] or None,
+
+                    # Normalize card number to safe string
+                    card_number=normalize_card_number(row["card_number"]) if row["card_number"] else None,
+
+                    ip_address=row["ip_address"] or None,
+                    reason=row["reason"],
+                    source=row["source"]
+                )
+                out.append(record)
+
+            except Exception as e:
+                logger.warning(f"Invalid blacklist row skipped: {row.to_dict()}, error={e}")
+
+        return out
+

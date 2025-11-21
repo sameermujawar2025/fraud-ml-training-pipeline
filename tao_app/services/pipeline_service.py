@@ -1,72 +1,89 @@
+# services/pipeline_service.py
 import logging
 from datetime import timedelta
 from tao_app.utils.time_utils import utc_now
-from tao_app.models.user_behavior_record import UserBehaviorRecord
 
-logger=logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 class PipelineService:
-    def __init__(self, csv_loader, transaction_repository, user_behavior_repository, blacklist_repository, settings):
-        self.loader=csv_loader
-        self.txn_repo=transaction_repository
-        self.beh_repo=user_behavior_repository
-        self.bl_repo=blacklist_repository
-        self.settings=settings
+    def __init__(
+        self,
+        csv_loader,
+        transaction_repository,
+        blacklist_repository,
+        settings
+    ):
+        self.loader = csv_loader
+        self.txn_repo = transaction_repository
+        self.bl_repo = blacklist_repository
+        self.settings = settings
 
     def run_pipeline(self):
-        logger.info("Running pipeline")
+        logger.info("Starting 90-day transaction pipeline...")
 
-        txns = self.loader.load_transactions(self.settings.csv_transactions_path)
-        if not txns:
-            logger.warning("No transactions loaded from CSV.")
+        # --------------------------------------------------------
+        # 1. LOAD TRANSACTIONS CSV
+        # --------------------------------------------------------
+        try:
+            txns = self.loader.load_transactions(self.settings.csv_transactions_path)
+        except Exception as e:
+            logger.error(f"Failed to load transactions CSV: {e}")
             return
 
-        # Use REAL system time, not CSV's max timestamp
-        now = max(t.timestamp for t in txns)
-        cutoff = now - timedelta(hours=1)
+        if not txns:
+            logger.warning("CSV loaded but contains zero valid transactions.")
+            return
 
-        # Filter last 1-hour records
-        last_hour = [t for t in txns if t.timestamp >= cutoff]
+        # Use system time for cutoff
+        now = utc_now()
+        cutoff = now - timedelta(days=90)
 
-        logger.info(f"Loaded {len(txns)} transactions total.")
-        logger.info(f"Filtered {len(last_hour)} transactions for last 1 hour window.")
+        # Filter last 90 days
+        last_90d = [t for t in txns if t.timestamp >= cutoff]
+        dropped = len(txns) - len(last_90d)
 
-        # Save last hour dataset
-        self.txn_repo.ensure_indexes(self.settings.last_hour_ttl_seconds)
-        self.txn_repo.replace_last_hour_transactions(last_hour)
+        logger.info(f"Total CSV transactions: {len(txns)}")
+        logger.info(f"Transactions within last 90 days: {len(last_90d)}")
+        logger.info(f"Older transactions discarded: {dropped}")
 
-        # Build 60-day user behavior
-        win = now - timedelta(days=self.settings.behavior_window_days)
-        filt = [t for t in txns if t.timestamp >= win]
+        if not last_90d:
+            logger.warning("No records qualify for last 90 days. Nothing saved.")
+            return
 
-        grouped = {}
-        for t in filt:
-            grouped.setdefault((t.user_id, t.card_number), []).append(t)
+        # Save 90-day dataset
+        try:
+            self.txn_repo.ensure_indexes(self.settings.last_90d_ttl_seconds)
+            self.txn_repo.replace_90day_transactions(last_90d)
+        except Exception as e:
+            logger.error(f"Failed writing 90-day transactions to MongoDB: {e}")
+            return
 
-        records = []
-        for (u, c), g in grouped.items():
-            gsorted = sorted(g, key=lambda x: x.timestamp)
-            last = gsorted[-1]
-            am = [x.amount for x in gsorted]
+        logger.info("✔ 90-day transaction dataset updated.")
 
-            rec = UserBehaviorRecord(
-                user_id=u,
-                card_number=c,
-                last_transaction_timestamp=last.timestamp,
-                last_amount=last.amount,
-                last_country=last.current_country,
-                last_latitude=last.current_latitude,
-                last_longitude=last.current_longitude,
-                total_txn_60d=len(gsorted),
-                total_decline_60d=len([x for x in gsorted if x.txn_status == 'DECLINED']),
-                avg_amount_60d=sum(am) / len(am),
-                max_amount_60d=max(am),
-                min_amount_60d=min(am)
-            )
-            records.append(rec)
+        # --------------------------------------------------------
+        # 2. LOAD BLACKLIST CSV (optional)
+        # --------------------------------------------------------
+        if self.settings.csv_blacklist_path:
+            logger.info(f"Loading blacklist CSV: {self.settings.csv_blacklist_path}")
 
-        self.beh_repo.ensure_indexes()
-        self.beh_repo.replace_behavior(records)
+            try:
+                blacklist_records = self.loader.load_blacklist(self.settings.csv_blacklist_path)
+            except Exception as e:
+                logger.error(f"Failed to load blacklist CSV: {e}")
+                blacklist_records = []
 
-        logger.info(f"User behavior profiles generated: {len(records)}")
-        logger.info("Pipeline done")
+            if blacklist_records:
+                try:
+                    self.bl_repo.replace_blacklist(blacklist_records)
+                    logger.info(f"✔ Blacklist updated: {len(blacklist_records)} entries")
+                except Exception as e:
+                    logger.error(f"Failed writing blacklist to MongoDB: {e}")
+            else:
+                logger.warning("No blacklist records found in CSV.")
+        else:
+            logger.info("No blacklist CSV path provided. Skipping blacklist load.")
+
+        # --------------------------------------------------------
+        # DONE
+        # --------------------------------------------------------
+        logger.info("✔ Full pipeline execution complete.")

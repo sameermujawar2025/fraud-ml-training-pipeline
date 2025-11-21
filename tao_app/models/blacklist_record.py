@@ -1,8 +1,11 @@
+# models/blacklist_record.py
 from pydantic import BaseModel
+from typing import Optional
 
 class BlacklistRecord(BaseModel):
-    user_id: str | None = None
-    card_number: str | None = None
-    ip_address: str | None = None
-    reason: str | None = None
-    source: str | None = None
+    user_id: Optional[str] = None
+    card_number: Optional[str] = None
+    ip_address: Optional[str] = None
+
+    reason: str
+    source: str

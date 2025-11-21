@@ -1,9 +1,6 @@
+# models/transaction_record.py
 from datetime import datetime
 from pydantic import BaseModel
-
-from datetime import datetime
-from pydantic import BaseModel
-
 
 class TransactionRecord(BaseModel):
     transaction_id: str
@@ -32,4 +29,3 @@ class TransactionRecord(BaseModel):
     customer_risk_category: str
     customer_kyc_status: str
     customer_account_age_days: int
-

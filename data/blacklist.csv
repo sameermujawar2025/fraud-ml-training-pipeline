@@ -1,6 +1,6 @@
 user_id,card_number,ip_address,reason,source
-U0999,,,Confirmed Fraud,csv
-,4555666677778888,,Stolen Card,csv
-,,192.168.1.200,Known Botnet IP,csv
-U0543,4111222233334444,,Chargeback Abuse,manual
-,4012888888881881,,High-Risk BIN,risk-team
+U0999,,,"Confirmed Fraud",csv
+,"4555666677778888",,"Stolen Card",csv
+,,"192.168.1.200","Known Botnet IP",csv
+U0543,"4111222233334444",,"Chargeback Abuse",manual
+,"4012888888881881",,"High-Risk BIN",risk-team
